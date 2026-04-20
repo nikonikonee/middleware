@@ -3,7 +3,7 @@
 const crypto = require('crypto');
 const { randBytes, randInt, pickName } = require('../util/rand');
 const { StringPool } = require('../util/stringpool');
-const { encryptLayered } = require('../techniques/encrypt');
+const { encryptPolymorphic } = require('../techniques/encrypt');
 const { fragmentBuffer } = require('../techniques/fragment');
 const { junkFunction, junkBlock, interleaveJunk, opaquePredicate } = require('../techniques/junk');
 const { buildAntiDebug, buildDevtoolsTrap } = require('../techniques/antidebug');
@@ -67,7 +67,7 @@ function buildObfuscatedScript(source, options, buildOutput) {
   const pool = new StringPool(nameStyle);
   const P = s => pool.add(s);
 
-  const scrambled = encryptLayered(source);
+  const scrambled = encryptPolymorphic(source);
   const S1 = scrambled.cipher;
 
   const midAes = aesGcmEncrypt(S1);
@@ -85,16 +85,16 @@ function buildObfuscatedScript(source, options, buildOutput) {
   const OUTER_IV_LEN = outerIv.length;
 
   const names = {
-    K1_OBJ: pickName(nameStyle),
-    K2_OBJ: pickName(nameStyle),
+    XOR_KEYS: pickName(nameStyle),
+    SCALARS: pickName(nameStyle),
+    ROTATES: pickName(nameStyle),
+    RECIPE: pickName(nameStyle),
     MID_KEY_OBJ: pickName(nameStyle),
     MID_IV: pickName(nameStyle),
     MASKED_OBJ: pickName(nameStyle),
     SALT: pickName(nameStyle),
     ITER_A: pickName(nameStyle),
     ITER_B: pickName(nameStyle),
-    SHIFT_A: pickName(nameStyle),
-    SHIFT_B: pickName(nameStyle),
     FRAG_ARR: pickName(nameStyle),
     REAL_IDX: pickName(nameStyle),
     START_MARK: pickName(nameStyle),
@@ -140,24 +140,49 @@ function buildObfuscatedScript(source, options, buildOutput) {
     }
   }
 
-  const k1Chunks = splitBuffer(scrambled.k1, keyFragments);
-  const k2Chunks = splitBuffer(scrambled.k2, Math.min(keyFragments, scrambled.k2.length));
   const midKeyChunks = splitBuffer(midAes.key, keyFragments);
-  const shiftA = randInt(0, 256);
-  const shiftB = scrambled.shift ^ shiftA;
+
+  // Per-step XOR keys: emit as a dictionary of step-index -> scattered-chunk
+  // subdictionaries. At runtime each XOR step reassembles its own key via
+  // Object.keys().sort() on its subdictionary. Scalars and rotates are small
+  // integers; emit them as sparse arrays indexed by step.
+  const recipe = scrambled.recipe;
+  const recipeLen = recipe.length;
+  const scalarsArr = new Array(recipeLen).fill(0);
+  const rotatesArr = new Array(recipeLen).fill(0);
+  for (let i = 0; i < recipeLen; i++) {
+    if (scrambled.scalars[i] !== undefined) scalarsArr[i] = scrambled.scalars[i];
+    if (scrambled.rotates[i] !== undefined) rotatesArr[i] = scrambled.rotates[i];
+  }
+
+  // Inject a few fake-scalar / fake-rotate entries for non-matching ops, so an
+  // attacker can't tell at a glance which op uses which array. Op dispatch at
+  // runtime ignores these for ops that don't need them.
+  for (let i = 0; i < recipeLen; i++) {
+    if (scalarsArr[i] === 0) scalarsArr[i] = randInt(1, 255);
+    if (rotatesArr[i] === 0) rotatesArr[i] = randInt(1, 7);
+  }
 
   const cipherFrags = fragmentBuffer(S3, cipherFragments[0], cipherFragments[1]);
 
   const keyDecls = [];
-  keyDecls.push(`${names.K1_OBJ}=Object[${P('create')}](null)`);
-  k1Chunks.forEach((c, i) => keyDecls.push(`${names.K1_OBJ}[${i}]=${u8Lit(c)}`));
-  keyDecls.push(`${names.K2_OBJ}=Object[${P('create')}](null)`);
-  k2Chunks.forEach((c, i) => keyDecls.push(`${names.K2_OBJ}[${i}]=${u8Lit(c)}`));
+  // Top-level XOR keys dict, parented by step index; each child is a scattered
+  // chunk dict with numeric-string keys, same shape as the middle-AES-key dict.
+  keyDecls.push(`${names.XOR_KEYS}=Object[${P('create')}](null)`);
+  for (const stepStr of Object.keys(scrambled.xorKeys)) {
+    const step = Number(stepStr);
+    const key = scrambled.xorKeys[step];
+    const parts = Math.min(keyFragments, Math.max(1, key.length));
+    const chunks = splitBuffer(key, parts);
+    keyDecls.push(`${names.XOR_KEYS}[${step}]=Object[${P('create')}](null)`);
+    chunks.forEach((c, i) => keyDecls.push(`${names.XOR_KEYS}[${step}][${i}]=${u8Lit(c)}`));
+  }
+  keyDecls.push(`${names.SCALARS}=[${scalarsArr.join(',')}]`);
+  keyDecls.push(`${names.ROTATES}=[${rotatesArr.join(',')}]`);
+  keyDecls.push(`${names.RECIPE}=[${recipe.join(',')}]`);
   keyDecls.push(`${names.MID_KEY_OBJ}=Object[${P('create')}](null)`);
   midKeyChunks.forEach((c, i) => keyDecls.push(`${names.MID_KEY_OBJ}[${i}]=${u8Lit(c)}`));
   keyDecls.push(`${names.MID_IV}=${u8Lit(midAes.iv)}`);
-  keyDecls.push(`${names.SHIFT_A}=${shiftA}`);
-  keyDecls.push(`${names.SHIFT_B}=${shiftB}`);
   keyDecls.push(`${names.MASKED_OBJ}=[${maskedEntries.map(u8Lit).join(',')}]`);
   keyDecls.push(`${names.SALT}=[${saltEntries.map(u8Lit).join(',')}]`);
   keyDecls.push(`${names.ITER_A}=[${iterAEntries.join(',')}]`);
@@ -178,7 +203,7 @@ function buildObfuscatedScript(source, options, buildOutput) {
     else fragInserts.push(`Array[${P('prototype')}][${P('push')}][${P('apply')}](${names.FRAG_ARR},[${entries}])`);
   }
 
-  const varDecl = `var ${names.K1_OBJ},${names.K2_OBJ},${names.MID_KEY_OBJ},${names.MID_IV},${names.SHIFT_A},${names.SHIFT_B},${names.MASKED_OBJ},${names.SALT},${names.ITER_A},${names.ITER_B},${names.REAL_IDX},${names.FRAG_ARR},${names.START_MARK},${names.END_MARK}`;
+  const varDecl = `var ${names.XOR_KEYS},${names.SCALARS},${names.ROTATES},${names.RECIPE},${names.MID_KEY_OBJ},${names.MID_IV},${names.MASKED_OBJ},${names.SALT},${names.ITER_A},${names.ITER_B},${names.REAL_IDX},${names.FRAG_ARR},${names.START_MARK},${names.END_MARK}`;
   const allDecls = [varDecl, ...keyDecls, ...fragInserts];
   const scatteredDecls = interleaveJunk(allDecls, junkRatio);
 
@@ -212,18 +237,17 @@ function buildObfuscatedScript(source, options, buildOutput) {
     midBody: pickName(nameStyle), mkKeys: pickName(nameStyle), midKeyTotal: pickName(nameStyle),
     midKeyLoop1: pickName(nameStyle), midKey: pickName(nameStyle), midKeyLoop2: pickName(nameStyle),
     S1: pickName(nameStyle), midKeyLoop3: pickName(nameStyle), wipeS2: pickName(nameStyle),
-    k1Keys: pickName(nameStyle), k1Total: pickName(nameStyle), k1Loop1: pickName(nameStyle),
-    K1: pickName(nameStyle), k1Loop2: pickName(nameStyle), k2Keys: pickName(nameStyle),
-    k2Total: pickName(nameStyle), k2Loop1: pickName(nameStyle), K2: pickName(nameStyle),
-    k2Loop2: pickName(nameStyle), S: pickName(nameStyle), T: pickName(nameStyle),
-    tLoop1: pickName(nameStyle), tLoop2: pickName(nameStyle), tLoop3: pickName(nameStyle),
-    plain: pickName(nameStyle), wipeK1: pickName(nameStyle), wipeK2: pickName(nameStyle),
-    wipeT: pickName(nameStyle), wipeS1: pickName(nameStyle), sortX: pickName(nameStyle),
-    sortY: pickName(nameStyle),
+    step: pickName(nameStyle), op: pickName(nameStyle), subKeys: pickName(nameStyle),
+    subTotal: pickName(nameStyle), subLoop1: pickName(nameStyle), xk: pickName(nameStyle),
+    subLoop2: pickName(nameStyle), byteLoop: pickName(nameStyle), T: pickName(nameStyle),
+    rot: pickName(nameStyle),
+    plain: pickName(nameStyle), wipeT: pickName(nameStyle), wipeS1: pickName(nameStyle),
+    sortX: pickName(nameStyle), sortY: pickName(nameStyle), sc: pickName(nameStyle),
   };
 
   const W = {
-    k1: pickName(nameStyle), k2: pickName(nameStyle), k3: pickName(nameStyle),
+    xs: pickName(nameStyle), xsub: pickName(nameStyle),
+    k3: pickName(nameStyle),
     fi: pickName(nameStyle), mi: pickName(nameStyle), si: pickName(nameStyle),
   };
 
@@ -259,32 +283,50 @@ async function ${names.DECRYPT_ALL}(){
   var ${L.S1}=await ${names.AES}(${L.midKey},${L.midIv},${L.midBody});
   for(var ${L.midKeyLoop3}=0;${L.midKeyLoop3}<${L.midKey}.length;${L.midKeyLoop3}++)${L.midKey}[${L.midKeyLoop3}]=0;
   for(var ${L.wipeS2}=0;${L.wipeS2}<${L.S2}.length;${L.wipeS2}++)${L.S2}[${L.wipeS2}]=0;
-  var ${L.k1Keys}=Object[${P('keys')}](${names.K1_OBJ})[${P('sort')}](function(${L.sortX},${L.sortY}){return (${L.sortX}-0)-(${L.sortY}-0);});
-  var ${L.k1Total}=0;
-  for(var ${L.k1Loop1}=0;${L.k1Loop1}<${L.k1Keys}.length;${L.k1Loop1}++)${L.k1Total}+=${names.K1_OBJ}[${L.k1Keys}[${L.k1Loop1}]].length;
-  var ${L.K1}=new Uint8Array(${L.k1Total});${L.off}=0;
-  for(var ${L.k1Loop2}=0;${L.k1Loop2}<${L.k1Keys}.length;${L.k1Loop2}++){${L.K1}.set(${names.K1_OBJ}[${L.k1Keys}[${L.k1Loop2}]],${L.off});${L.off}+=${names.K1_OBJ}[${L.k1Keys}[${L.k1Loop2}]].length;}
-  var ${L.k2Keys}=Object[${P('keys')}](${names.K2_OBJ})[${P('sort')}](function(${L.sortX},${L.sortY}){return (${L.sortX}-0)-(${L.sortY}-0);});
-  var ${L.k2Total}=0;
-  for(var ${L.k2Loop1}=0;${L.k2Loop1}<${L.k2Keys}.length;${L.k2Loop1}++)${L.k2Total}+=${names.K2_OBJ}[${L.k2Keys}[${L.k2Loop1}]].length;
-  var ${L.K2}=new Uint8Array(${L.k2Total});${L.off}=0;
-  for(var ${L.k2Loop2}=0;${L.k2Loop2}<${L.k2Keys}.length;${L.k2Loop2}++){${L.K2}.set(${names.K2_OBJ}[${L.k2Keys}[${L.k2Loop2}]],${L.off});${L.off}+=${names.K2_OBJ}[${L.k2Keys}[${L.k2Loop2}]].length;}
-  var ${L.S}=${names.SHIFT_A}^${names.SHIFT_B};
-  var ${L.T}=new Uint8Array(${L.S1}.length);
-  for(var ${L.tLoop1}=0;${L.tLoop1}<${L.S1}.length;${L.tLoop1}++)${L.T}[${L.tLoop1}]=${L.S1}[${L.tLoop1}]^${L.K2}[${L.tLoop1}%${L.K2}.length];
-  for(var ${L.tLoop2}=0;${L.tLoop2}<${L.T}.length;${L.tLoop2}++)${L.T}[${L.tLoop2}]=(${L.T}[${L.tLoop2}]-${L.S}+256)&0xff;
-  for(var ${L.tLoop3}=0;${L.tLoop3}<${L.T}.length;${L.tLoop3}++)${L.T}[${L.tLoop3}]=${L.T}[${L.tLoop3}]^${L.K1}[${L.tLoop3}%${L.K1}.length];
+  // Polymorphic inner decrypt: walk the recipe in reverse, applying each
+  // operation's inverse. Op codes: 0=XOR (self-inverse), 1=ADD (inverse SUB),
+  // 2=SUB (inverse ADD), 3=ROTL (inverse ROTR), 4=ROTR (inverse ROTL), 5=NOT
+  // (self-inverse). Every step reads its XOR key (if any) out of the scattered
+  // XOR_KEYS dict, rebuilding via Object.keys().sort() per step.
+  var ${L.T}=new Uint8Array(${L.S1});
+  for(var ${L.step}=${names.RECIPE}.length-1;${L.step}>=0;${L.step}--){
+    var ${L.op}=${names.RECIPE}[${L.step}];
+    if(${L.op}===0){
+      var ${L.subKeys}=Object[${P('keys')}](${names.XOR_KEYS}[${L.step}])[${P('sort')}](function(${L.sortX},${L.sortY}){return (${L.sortX}-0)-(${L.sortY}-0);});
+      var ${L.subTotal}=0;
+      for(var ${L.subLoop1}=0;${L.subLoop1}<${L.subKeys}.length;${L.subLoop1}++)${L.subTotal}+=${names.XOR_KEYS}[${L.step}][${L.subKeys}[${L.subLoop1}]].length;
+      var ${L.xk}=new Uint8Array(${L.subTotal});${L.off}=0;
+      for(var ${L.subLoop2}=0;${L.subLoop2}<${L.subKeys}.length;${L.subLoop2}++){${L.xk}.set(${names.XOR_KEYS}[${L.step}][${L.subKeys}[${L.subLoop2}]],${L.off});${L.off}+=${names.XOR_KEYS}[${L.step}][${L.subKeys}[${L.subLoop2}]].length;}
+      for(var ${L.byteLoop}=0;${L.byteLoop}<${L.T}.length;${L.byteLoop}++)${L.T}[${L.byteLoop}]=${L.T}[${L.byteLoop}]^${L.xk}[${L.byteLoop}%${L.xk}.length];
+      for(var ${L.subLoop1}=0;${L.subLoop1}<${L.xk}.length;${L.subLoop1}++)${L.xk}[${L.subLoop1}]=0;
+    }else if(${L.op}===1){
+      var ${L.sc}=${names.SCALARS}[${L.step}];
+      for(var ${L.byteLoop}=0;${L.byteLoop}<${L.T}.length;${L.byteLoop}++)${L.T}[${L.byteLoop}]=(${L.T}[${L.byteLoop}]-${L.sc}+256)&0xff;
+    }else if(${L.op}===2){
+      var ${L.sc}=${names.SCALARS}[${L.step}];
+      for(var ${L.byteLoop}=0;${L.byteLoop}<${L.T}.length;${L.byteLoop}++)${L.T}[${L.byteLoop}]=(${L.T}[${L.byteLoop}]+${L.sc})&0xff;
+    }else if(${L.op}===3){
+      var ${L.rot}=${names.ROTATES}[${L.step}];
+      for(var ${L.byteLoop}=0;${L.byteLoop}<${L.T}.length;${L.byteLoop}++)${L.T}[${L.byteLoop}]=((${L.T}[${L.byteLoop}]>>>${L.rot})|(${L.T}[${L.byteLoop}]<<(8-${L.rot})))&0xff;
+    }else if(${L.op}===4){
+      var ${L.rot}=${names.ROTATES}[${L.step}];
+      for(var ${L.byteLoop}=0;${L.byteLoop}<${L.T}.length;${L.byteLoop}++)${L.T}[${L.byteLoop}]=((${L.T}[${L.byteLoop}]<<${L.rot})|(${L.T}[${L.byteLoop}]>>>(8-${L.rot})))&0xff;
+    }else if(${L.op}===5){
+      for(var ${L.byteLoop}=0;${L.byteLoop}<${L.T}.length;${L.byteLoop}++)${L.T}[${L.byteLoop}]=(~${L.T}[${L.byteLoop}])&0xff;
+    }
+  }
   var ${L.plain}=new (window[${P('TextDecoder')}])(${P('utf-8')})[${P('decode')}](${L.T});
-  for(var ${L.wipeK1}=0;${L.wipeK1}<${L.K1}.length;${L.wipeK1}++)${L.K1}[${L.wipeK1}]=0;
-  for(var ${L.wipeK2}=0;${L.wipeK2}<${L.K2}.length;${L.wipeK2}++)${L.K2}[${L.wipeK2}]=0;
   for(var ${L.wipeT}=0;${L.wipeT}<${L.T}.length;${L.wipeT}++)${L.T}[${L.wipeT}]=0;
   for(var ${L.wipeS1}=0;${L.wipeS1}<${L.S1}.length;${L.wipeS1}++)${L.S1}[${L.wipeS1}]=0;
   return ${L.plain};
 }
 function ${names.WIPE}(){
   try{
-    for(var ${W.k1} in ${names.K1_OBJ}){if(${names.K1_OBJ}[${W.k1}]&&${names.K1_OBJ}[${W.k1}][${P('fill')}])${names.K1_OBJ}[${W.k1}][${P('fill')}](0);${names.K1_OBJ}[${W.k1}]=null;}
-    for(var ${W.k2} in ${names.K2_OBJ}){if(${names.K2_OBJ}[${W.k2}]&&${names.K2_OBJ}[${W.k2}][${P('fill')}])${names.K2_OBJ}[${W.k2}][${P('fill')}](0);${names.K2_OBJ}[${W.k2}]=null;}
+    for(var ${W.xs} in ${names.XOR_KEYS}){
+      var ${W.xsub}=${names.XOR_KEYS}[${W.xs}];
+      if(${W.xsub}){for(var __k in ${W.xsub}){if(${W.xsub}[__k]&&${W.xsub}[__k][${P('fill')}])${W.xsub}[__k][${P('fill')}](0);${W.xsub}[__k]=null;}}
+      ${names.XOR_KEYS}[${W.xs}]=null;
+    }
     for(var ${W.k3} in ${names.MID_KEY_OBJ}){if(${names.MID_KEY_OBJ}[${W.k3}]&&${names.MID_KEY_OBJ}[${W.k3}][${P('fill')}])${names.MID_KEY_OBJ}[${W.k3}][${P('fill')}](0);${names.MID_KEY_OBJ}[${W.k3}]=null;}
     if(${names.MID_IV}&&${names.MID_IV}[${P('fill')}])${names.MID_IV}[${P('fill')}](0);
     for(var ${W.fi}=0;${W.fi}<${names.FRAG_ARR}.length;${W.fi}++){${names.FRAG_ARR}[${W.fi}][1]=[];${names.FRAG_ARR}[${W.fi}]=null;}
@@ -292,7 +334,7 @@ function ${names.WIPE}(){
     for(var ${W.mi}=0;${W.mi}<${names.MASKED_OBJ}.length;${W.mi}++){if(${names.MASKED_OBJ}[${W.mi}][${P('fill')}])${names.MASKED_OBJ}[${W.mi}][${P('fill')}](0);}
     for(var ${W.si}=0;${W.si}<${names.SALT}.length;${W.si}++){if(${names.SALT}[${W.si}][${P('fill')}])${names.SALT}[${W.si}][${P('fill')}](0);}
     ${names.ITER_A}.length=0;${names.ITER_B}.length=0;
-    ${names.SHIFT_A}=0;${names.SHIFT_B}=0;
+    ${names.SCALARS}.length=0;${names.ROTATES}.length=0;${names.RECIPE}.length=0;
   }catch(_){}
 }`;
 

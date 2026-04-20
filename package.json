@@ -1,6 +1,6 @@
 {
   "name": "@niko122/middleware",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Express-style middleware that obfuscates .html, .css, and .js responses on the fly with layered AES-GCM, PBKDF2, anti-debug traps, and a devtools kill switch.",
   "main": "src/index.js",
   "types": "index.d.ts",
