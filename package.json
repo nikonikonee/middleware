@@ -1,0 +1,54 @@
+{
+  "name": "@niko122/middleware",
+  "version": "0.2.0",
+  "description": "Express-style middleware that obfuscates .html, .css, and .js responses on the fly with layered AES-GCM, PBKDF2, anti-debug traps, and a devtools kill switch.",
+  "main": "src/index.js",
+  "types": "index.d.ts",
+  "bin": {
+    "web-middleware": "bin/web-middleware.js"
+  },
+  "scripts": {
+    "test": "node test/verify.js && node test/verify-js.js && node test/verify-css.js",
+    "test:html": "node test/verify.js",
+    "test:js": "node test/verify-js.js",
+    "test:css": "node test/verify-css.js"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "index.d.ts",
+    "LICENSE"
+  ],
+  "keywords": [
+    "obfuscation",
+    "obfuscator",
+    "middleware",
+    "express",
+    "html",
+    "css",
+    "javascript",
+    "js",
+    "protection",
+    "anti-debug",
+    "devtools",
+    "aes-gcm",
+    "pbkdf2",
+    "encryption"
+  ],
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "author": "niko122",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nikonikonee/middleware"
+  },
+  "dependencies": {},
+  "devDependencies": {},
+  "peerDependenciesMeta": {
+    "express": {
+      "optional": true
+    }
+  }
+}

@@ -1,0 +1,14 @@
+/* sample.css - exercises the CSS obfuscator end to end. The verify harness
+   picks up the injected <style> element and asserts its textContent matches
+   the source (with source-map comments stripped). */
+body {
+  background: #0e0f13;
+  color: #e8e8ea;
+  font-family: system-ui, sans-serif;
+}
+
+.web-middleware-demo {
+  border: 1px solid #2a2d36;
+  border-radius: 10px;
+  padding: 1rem 1.5rem;
+}

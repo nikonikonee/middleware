@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Hello web-middleware</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #111; color: #eee; padding: 2rem; }
+    h1 { color: #6cf; }
+    .secret { border: 1px solid #444; padding: 1rem; border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <h1>Secret Page</h1>
+  <div class="secret">
+    <p>This HTML was served through web-middleware.</p>
+    <p id="who">Replace me.</p>
+    <button id="btn">Click</button>
+  </div>
+  <script>
+    document.getElementById('who').textContent = 'Hello, visitor!';
+    document.getElementById('btn').addEventListener('click', function () {
+      alert('It works. 42');
+    });
+  </script>
+</body>
+</html>
