@@ -27,7 +27,8 @@ app.use(middleware({
   integrityChecks: true,
   pbkdf2Iterations: 250000,
   closeUrl: 'https://example.com/blocked',
-  rewriteHtml: '<h1>Access denied.</h1>',
+  debugRewriteHtml: '<h1>Access denied.</h1>',
+  integrityRewriteHtml: '<h1> Access denied. </h1>',
   junkRatio: 2.0,
 }));
 
@@ -72,7 +73,7 @@ Extension decides the mode (`.html`, `.htm`, `.js`, `.mjs`, `.css`).
 * Env guard. Blocks execution under Node, headless runners, and contexts missing `window`, `document`, `navigator`, `crypto.subtle`, `TextEncoder`, or `TextDecoder`. Makes server-side prerendering and dumb scrapers fail loudly before decrypt.
 * Opaque predicates. Always-false guards emitted inline at the top of the bootstrap. Trivially true at runtime, non-trivial for static analysis tools that do not constant-fold.
 * Junk interleaving. Generated random functions, loops, and predicates are spliced between every real statement at a tunable `junkRatio` so the decompiled flow is buried under noise.
-* Kill switch. When any trap fires, the bootstrap slots `rewriteHtml` into `document.documentElement.innerHTML`, calls `window.stop()`, nulls `window.opener`, and navigates to `closeUrl` (or `about:blank` if unset).
+* Kill switch. When the anti-debug or devtools trap fires the bootstrap slots `debugRewriteHtml` into `document.documentElement.innerHTML`, calls `window.stop()`, nulls `window.opener`, and navigates to `closeUrl` (or `about:blank` if unset). When the integrity / tamper trap fires it slots `integrityRewriteHtml` instead and throws. Both fall back to the legacy `rewriteHtml` if unset.
 * Streaming-safe middleware. Wraps `res.write` and `res.end` so the full body is buffered only when it is going to be rewritten. Responses bigger than `maxBytes` (default 5 MiB), pre-compressed responses (`Content-Encoding: gzip`, `br`, etc.), `HEAD` / `OPTIONS` requests, and 204 / 205 / 304 statuses flush straight through. `ETag` is removed from rewritten responses because the body is no longer byte-stable across requests.
 * Include / exclude matching. Per-URL allow and deny lists accept regexes, substrings, functions, or arrays of those. Evaluated as include-first, then exclude.
 * Source map scrubbing. `/*# sourceMappingURL=... */` and `//# sourceMappingURL=...` lines are stripped before obfuscation so an attacker cannot pivot from the payload to the original source.
@@ -115,7 +116,9 @@ Full option list lives in `index.d.ts` (TypeScript types) and is also accessible
 | `integrityChecks` | `true` for HTML, `false` for external JS/CSS | Mask the outer password against a runtime SHA-256 of the sentinel-guarded region. |
 | `pbkdf2Iterations` | `250000` | PBKDF2-SHA256 iteration count for outer-key derivation. |
 | `closeUrl` | `''` | URL the close sequence navigates to when a trap fires. |
-| `rewriteHtml` | `''` | HTML snippet slotted in before the close sequence runs. |
+| `debugRewriteHtml` | `''` | HTML slotted into `documentElement.innerHTML` when the anti-debug / devtools trap fires. Falls back to `rewriteHtml`. |
+| `integrityRewriteHtml` | `''` | HTML slotted into `documentElement.innerHTML` when the integrity / tamper trap fires. Falls back to `rewriteHtml`. |
+| `rewriteHtml` | `''` | Legacy single-knob fallback used by both traps when the split options are unset. |
 | `junkRatio` | `2.0` | Roughly this many junk lines per real line. |
 | `stripSourceMaps` | `true` | Strip `sourceMappingURL` comments from the source. |
 | `keyFragments` | `8` | Number of chunks each symmetric key is split into. |

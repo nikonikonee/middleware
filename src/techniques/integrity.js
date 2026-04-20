@@ -27,9 +27,16 @@ function maskKeyWithRegion(realKey, regionContent) {
   return xorBytes(realKey, h);
 }
 
-function buildIntegrityUnmaskSnippet(fnName, argNames, pool) {
+function buildIntegrityUnmaskSnippet(fnName, argNames, pool, opts = {}) {
   const { MASKED, START, END } = argNames;
   const P = s => pool.add(s);
+  const rewriteHtml = (opts && opts.rewriteHtml) || '';
+  // Slotted into both tamper paths (sentinel gone / region flipped). Best-effort:
+  // try innerHTML, then innerText, then swallow. After the swap the script still
+  // throws 0 so the payload never continues down the decrypt path.
+  const rewriteAction = rewriteHtml
+    ? `try{document[${P('documentElement')}][${P('innerHTML')}]=${P(rewriteHtml)};}catch(_){try{document[${P('documentElement')}][${P('innerText')}]=${P(rewriteHtml)};}catch(__){}}`
+    : '';
   const vSc = pickName();
   const vSrc = pickName();
   const vSs = pickName();
@@ -50,7 +57,7 @@ async function ${fnName}(${MASKED},${START},${END}){
   }
   var ${vI}=${vSrc}[${P('indexOf')}](${START});
   var ${vJ}=${vSrc}[${P('indexOf')}](${END});
-  if(${vI}<0||${vJ}<0||${vJ}<=${vI}){throw 0;}
+  if(${vI}<0||${vJ}<0||${vJ}<=${vI}){${rewriteAction}throw 0;}
   var ${vRegion}=${vSrc}[${P('substring')}](${vI}+${START}[${P('length')}],${vJ});
   var ${vEnc}=new (window[${P('TextEncoder')}])()[${P('encode')}](${vRegion});
   var ${vHash}=new Uint8Array(await window[${P('crypto')}][${P('subtle')}][${P('digest')}](${P('SHA-256')},${vEnc}));

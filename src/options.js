@@ -22,6 +22,8 @@ const DEFAULTS = {
   pbkdf2Iterations: 250000,
   closeUrl: '',
   rewriteHtml: '',
+  debugRewriteHtml: '',
+  integrityRewriteHtml: '',
   junkRatio: 2.0,
   stripSourceMaps: true,
   keyFragments: 8,
@@ -69,6 +71,13 @@ function normalizeOptions(userOptions = {}) {
   }
   merged.integrityChecks = integrity;
   merged.useIntegrity = integrity;
+
+  // rewriteHtml is the legacy single-knob kill-screen HTML. It still works but
+  // now falls back for both debug and integrity traps. debugRewriteHtml wins
+  // for the anti-debug / devtools trap, integrityRewriteHtml wins for the
+  // integrity/tamper trap. Unset either and it falls back to rewriteHtml.
+  if (!merged.debugRewriteHtml) merged.debugRewriteHtml = merged.rewriteHtml || '';
+  if (!merged.integrityRewriteHtml) merged.integrityRewriteHtml = merged.rewriteHtml || '';
 
   merged._includeMatcher = toMatcher(merged.include);
   merged._excludeMatcher = toMatcher(merged.exclude);

@@ -59,6 +59,8 @@ function buildObfuscatedScript(source, options, buildOutput) {
     testMode = false,
     closeUrl = '',
     rewriteHtml = '',
+    debugRewriteHtml = '',
+    integrityRewriteHtml = '',
     useIntegrity = true,
   } = options;
 
@@ -192,7 +194,9 @@ function buildObfuscatedScript(source, options, buildOutput) {
   let unmaskFn;
   const UPARAMS = { MASKED: pickName(nameStyle), START: pickName(nameStyle), END: pickName(nameStyle) };
   if (useIntegrity) {
-    unmaskFn = buildIntegrityUnmaskSnippet(names.UNMASK, UPARAMS, pool);
+    unmaskFn = buildIntegrityUnmaskSnippet(names.UNMASK, UPARAMS, pool, {
+      rewriteHtml: integrityRewriteHtml || rewriteHtml || '',
+    });
   } else {
     unmaskFn = `async function ${names.UNMASK}(${UPARAMS.MASKED},${UPARAMS.START},${UPARAMS.END}){return new Uint8Array(${UPARAMS.MASKED});}`;
   }
@@ -295,7 +299,7 @@ function ${names.WIPE}(){
   const onTamper = `try{document[${P('documentElement')}][${P('innerHTML')}]="";}catch(_){}try{window[${P('stop')}]&&window[${P('stop')}]();}catch(_){}throw 0;`;
 
   const envGuardCode = buildEnvGuard(onTamper, testMode, pool);
-  const antiDebugCode = antiDebug && !testMode ? buildAntiDebug(onTamper, pool, { closeUrl, rewriteHtml }) : '';
+  const antiDebugCode = antiDebug && !testMode ? buildAntiDebug(onTamper, pool, { closeUrl, rewriteHtml: debugRewriteHtml || rewriteHtml || '' }) : '';
   const devtoolsCode = devtoolsTrap && !testMode ? buildDevtoolsTrap(onTamper, pool) : '';
 
   const bPlain = pickName(nameStyle);

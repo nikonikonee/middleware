@@ -10,7 +10,8 @@
  *     integrityChecks: true,
  *     pbkdf2Iterations: 250000,
  *     closeUrl: 'https://example.com/blocked',
- *     rewriteHtml: '<h1>Access denied.</h1>',
+ *     debugRewriteHtml: '<h1>Access denied.</h1>',
+ *     integrityRewriteHtml: '<h1> Access denied. </h1>',
  *     junkRatio: 2.0,
  *   }));
  */
@@ -69,12 +70,29 @@ export interface WebMiddlewareOptions {
   closeUrl?: string;
 
   /**
-   * HTML snippet to slot into document.documentElement.innerHTML before the
-   * close sequence runs. Useful for leaving a visible "access denied" message
-   * rather than a blank page.
+   * Legacy single-knob kill-screen HTML. Used as a fallback for both
+   * debugRewriteHtml and integrityRewriteHtml when those are unset.
+   * Prefer the split options for per-trap customization.
    * @default ''
    */
   rewriteHtml?: string;
+
+  /**
+   * HTML slotted into document.documentElement.innerHTML when the anti-debug
+   * or devtools trap fires (right before the close sequence runs). Falls back
+   * to rewriteHtml if unset.
+   * @default ''
+   */
+  debugRewriteHtml?: string;
+
+  /**
+   * HTML slotted into document.documentElement.innerHTML when the integrity /
+   * tamper trap fires (sentinel-guarded junk region was modified or removed).
+   * Falls back to rewriteHtml if unset. Only takes effect when
+   * integrityChecks is true.
+   * @default ''
+   */
+  integrityRewriteHtml?: string;
 
   /**
    * Ratio of junk statements / opaque predicates interleaved with the real
