@@ -4,6 +4,20 @@ Express-style middleware that obfuscates `.html`, `.css`, and `.js` responses on
 
 It is security through obfuscation, not a replacement for real server-side secrets. The goal is to make casual viewing of source, copy-pasting of scripts, and reverse-engineering meaningfully harder, not to resist a determined, patient attacker with a disassembler.
 
+## Timeline
+
+| Section |
+|---|
+| [Quick Start](#quick-start) |
+| [Loading CSS](#loading-css) |
+| [CLI](#cli) |
+| [Features](#features) |
+| [How it obfuscates](#how-it-obfuscates) |
+| [Configuration / Settings](#configuration) |
+| [Programmatic API](#programmatic-api) |
+| [Caveats](#caveats) |
+| [License](#license) |
+
 ## Install
 
 ```bash
